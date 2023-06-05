@@ -1139,6 +1139,9 @@ class Transformer(base_layer.BaseLayer):
     ngrammer_tpl: Params for the Ngrammer layer. This param must correspond to
       the VQNgrammer layer. If this is None, then there is no NGrammer layer
       present in this layer.
+    parallel_attention_ff: If True, rather than computing the Attention and FF
+      in series, the two will be computed in parallel and then summed. Based on
+      the GPT-J 6B implementation
   """
   input_dims: int = 0
   hidden_dims: int = 0
@@ -1158,6 +1161,7 @@ class Transformer(base_layer.BaseLayer):
   packed_input: bool = False
   tr_fflayer_tpl: LayerTpl = template_field(TransformerFeedForward)
   ngrammer_tpl: Optional[LayerTpl] = template_field(None)
+  parallel_attention_ff: : bool = False
 
   # This function can be overridden by subclasses.
   def _setup_attention(self, atten_tpl: LayerTpl, name: str)-> None:
@@ -1327,20 +1331,42 @@ class Transformer(base_layer.BaseLayer):
     self.add_summary('attention_output_norm_rms', _rms(atten_output),
                      verbosity=4)
 
-    # Residual dropout and connection
-    atten_output = self.residual_dropout(atten_output)
+    if not self.parallel_attention_ff:
+      # Residual dropout and connection
+      atten_output = self.residual_dropout(atten_output)
 
-    # Apply skip connection
-    if self.residual_droppath_prob > 0.0:
-      atten_output = self.residual_droppath(inputs, atten_output)
+      # Apply skip connection
+      if self.residual_droppath_prob > 0.0:
+        atten_output = self.residual_droppath(inputs, atten_output)
+      else:
+        atten_output += inputs
+
+      if self.norm_policy == 'post_skip':
+        atten_output = self.layer_norm(atten_output)
+
+      self.add_summary('attention_output_rel_cos', _rel_cos(inputs, atten_output),
+                      verbosity=4)
     else:
-      atten_output += inputs
+      ff_output = self.ff_layer(inputs_normalized, paddings=paddings)
 
-    if self.norm_policy == 'post_skip':
-      atten_output = self.layer_norm(atten_output)
+      gptj_output = ff_output + atten_output
 
-    self.add_summary('attention_output_rel_cos', _rel_cos(inputs, atten_output),
-                     verbosity=4)
+      # Residual dropout and connection
+      gptj_output = self.residual_dropout(gptj_output)
+
+      # Apply skip connection
+      if self.residual_droppath_prob > 0.0:
+        gptj_output = self.residual_droppath(inputs, gptj_output)
+      else:
+        gptj_output += inputs
+
+      if self.norm_policy == 'post_skip':
+        gptj_output = self.layer_norm(gptj_output)
+
+      self.add_summary('gptj_output_rel_cos', _rel_cos(inputs, gptj_output),
+                      verbosity=4)
+
+      return gptj_output, atten_probs
 
     # Apply cross attention if applicable
     if self.use_cross_attention and (
@@ -1548,6 +1574,9 @@ class StackedTransformer(base_layer.BaseLayer):
       entry in the sequence is None, then there is no NGrammer layer present in
       that corresponding layer.
     remat: Boolean, whether to remat each layer to save memory.
+    parallel_attention_ff: If True, rather than computing the Attention and FF
+      in series, the two will be computed in parallel and then summed. Based on
+      the GPT-J 6B implementation
   """
   use_cross_attention: bool = False
   mask_self_attention: bool = False
@@ -1575,7 +1604,11 @@ class StackedTransformer(base_layer.BaseLayer):
   min_group_size: Optional[int] = None
   moe_layers: Optional[Sequence[int]] = ()
   ngrammer_tpls: Optional[Sequence[LayerTpl]] = template_field(None)
+<<<<<<< HEAD
   remat: bool = False
+=======
+  parallel_attention_ff: bool = False
+>>>>>>> 2608508 (Add flag to make attention and FF in parallel)
 
   def _clone_layer_params(self, layer_tpl: LayerTpl) -> LayerTpl:
     """Useful to let sublasses switch the class (e.g. Streaming version)."""
@@ -1610,6 +1643,7 @@ class StackedTransformer(base_layer.BaseLayer):
       )
       p_i.relu_dropout_prob = self.relu_dropout_prob or self.dropout_prob
       p_i.hidden_dims = self.hidden_dims
+      p_i.parallel_attention_ff = self.parallel_attention_ff
 
       if self.residual_droppath_prob > 0.0:
         p_i.residual_droppath_prob = (
