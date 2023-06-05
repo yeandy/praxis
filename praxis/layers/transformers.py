@@ -1604,11 +1604,8 @@ class StackedTransformer(base_layer.BaseLayer):
   min_group_size: Optional[int] = None
   moe_layers: Optional[Sequence[int]] = ()
   ngrammer_tpls: Optional[Sequence[LayerTpl]] = template_field(None)
-<<<<<<< HEAD
   remat: bool = False
-=======
   parallel_attention_ff: bool = False
->>>>>>> 2608508 (Add flag to make attention and FF in parallel)
 
   def _clone_layer_params(self, layer_tpl: LayerTpl) -> LayerTpl:
     """Useful to let sublasses switch the class (e.g. Streaming version)."""
