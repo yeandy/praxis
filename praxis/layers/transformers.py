@@ -1161,7 +1161,7 @@ class Transformer(base_layer.BaseLayer):
   packed_input: bool = False
   tr_fflayer_tpl: LayerTpl = template_field(TransformerFeedForward)
   ngrammer_tpl: Optional[LayerTpl] = template_field(None)
-  parallel_attention_ff: : bool = False
+  parallel_attention_ff: bool = False
 
   # This function can be overridden by subclasses.
   def _setup_attention(self, atten_tpl: LayerTpl, name: str)-> None:
